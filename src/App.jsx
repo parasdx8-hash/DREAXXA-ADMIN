@@ -1,224 +1,217 @@
-import { useState, useEffect } from "react";
-import "./App.css";
-import { ref, onValue, set } from "firebase/database";
-import { database } from "./firebase";
+import { useEffect, useState } from "react";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 
-const ADMIN_PASSWORD = "DREAXXA@123";
+import {
+  onValue,
+  ref,
+  remove,
+  set,
+} from "firebase/database";
+
+import { auth, database } from "./firebase";
+import "./App.css";
 
 function App() {
-  /* =========================
-     LOGIN
-  ========================= */
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
 
-  const handleLogin = () => {
-    if (password === ADMIN_PASSWORD) {
-      setLoggedIn(true);
-      setPassword("");
-      setLoginError("");
-    } else {
-      setLoginError("Incorrect password ❌");
-    }
-  };
+  const [activePage, setActivePage] = useState("dashboard");
 
-  /* =========================
-     DASHBOARD STATES
-  ========================= */
-
-  const [active, setActive] = useState("Dashboard");
   const [keys, setKeys] = useState({});
+  const [settings, setSettings] = useState({
+    adminName: "DREAXXA ADMIN",
+    appVersion: "1.0.0",
+    maintenance: false,
+  });
 
-  const [newKey, setNewKey] = useState("");
+  const [keyName, setKeyName] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
-  const [expiryTime, setExpiryTime] = useState("");
+  const [expiryTime, setExpiryTime] = useState("23:59");
+  const [createMessage, setCreateMessage] = useState("");
 
-  const [adminName, setAdminName] = useState("Admin");
+  const [adminName, setAdminName] = useState("DREAXXA ADMIN");
   const [appVersion, setAppVersion] = useState("1.0.0");
   const [maintenance, setMaintenance] = useState(false);
-
   const [settingsMessage, setSettingsMessage] = useState("");
 
-  /* =========================
-     FIREBASE KEYS
-  ========================= */
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
-    if (!loggedIn) return;
+    if (!user) {
+      setKeys({});
+      return;
+    }
 
     const keysRef = ref(database, "keys");
 
-    const unsubscribe = onValue(
-      keysRef,
-      (snapshot) => {
-        setKeys(snapshot.val() || {});
-      },
-      (error) => {
-        console.error("Firebase read error:", error);
-      }
-    );
+    const unsubscribe = onValue(keysRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      setKeys(data);
+    });
 
     return () => unsubscribe();
-  }, [loggedIn]);
-
-  /* =========================
-     FIREBASE SETTINGS
-  ========================= */
+  }, [user]);
 
   useEffect(() => {
-    if (!loggedIn) return;
+    if (!user) {
+      return;
+    }
 
     const settingsRef = ref(database, "settings");
 
-    const unsubscribe = onValue(
-      settingsRef,
-      (snapshot) => {
-        const data = snapshot.val();
+    const unsubscribe = onValue(settingsRef, (snapshot) => {
+      const data = snapshot.val();
 
-        if (!data) return;
-
-        if (data.adminName !== undefined) {
-          setAdminName(data.adminName);
-        }
-
-        if (data.appVersion !== undefined) {
-          setAppVersion(data.appVersion);
-        }
-
-        if (data.maintenance !== undefined) {
-          setMaintenance(data.maintenance);
-        }
-      },
-      (error) => {
-        console.error("Settings read error:", error);
+      if (data) {
+        setSettings(data);
+        setAdminName(data.adminName || "DREAXXA ADMIN");
+        setAppVersion(data.appVersion || "1.0.0");
+        setMaintenance(Boolean(data.maintenance));
       }
-    );
+    });
 
     return () => unsubscribe();
-  }, [loggedIn]);
+  }, [user]);
 
-  /* =========================
-     MENU
-  ========================= */
+  const handleLogin = async (event) => {
+    event.preventDefault();
 
-  const menu = [
-    "Dashboard",
-    "Create Key",
-    "Manage Keys",
-    "Settings",
-  ];
+    setLoginError("");
 
-  const keyList = Object.entries(keys);
-
-  /* =========================
-     KEY STATS
-  ========================= */
-
-  const activeKeys = keyList.filter(([_, data]) => {
-    if (!data?.enabled) return false;
-
-    if (!data?.expiresAt) return true;
-
-    return Date.now() < Number(data.expiresAt);
-  });
-
-  const expiredKeys = keyList.filter(([_, data]) => {
-    if (!data?.expiresAt) return false;
-
-    return Date.now() >= Number(data.expiresAt);
-  });
-
-  const disabledKeys = keyList.filter(
-    ([_, data]) => data?.enabled === false
-  );
-
-  /* =========================
-     CREATE KEY
-  ========================= */
-
-  const createKey = async () => {
-    const key = newKey.trim();
-
-    if (!key) {
-      alert("Please enter license key");
+    if (!email || !password) {
+      setLoginError("Please enter email and password.");
       return;
     }
-
-    if (!expiryDate || !expiryTime) {
-      alert("Please select expiry date and time");
-      return;
-    }
-
-    const expiresAt = new Date(
-      `${expiryDate}T${expiryTime}`
-    ).getTime();
 
     try {
-      await set(ref(database, `keys/${key}`), {
+      setLoggingIn(true);
+
+      await signInWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password
+      );
+    } catch (error) {
+      console.error(error);
+      setLoginError("Invalid email or password.");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+
+  const generateKey = () => {
+    const part1 = Math.random()
+      .toString(36)
+      .substring(2, 6)
+      .toUpperCase();
+
+    const part2 = Math.random()
+      .toString(36)
+      .substring(2, 6)
+      .toUpperCase();
+
+    return "DRX-" + part1 + "-" + part2;
+  };
+
+  const createLicenseKey = async (event) => {
+    event.preventDefault();
+
+    setCreateMessage("");
+
+    if (!keyName.trim()) {
+      setCreateMessage("Please enter a license key.");
+      return;
+    }
+
+    if (!expiryDate) {
+      setCreateMessage("Please select expiry date.");
+      return;
+    }
+
+    try {
+      const key = keyName.trim().toUpperCase();
+
+      const expiresAt = new Date(
+        expiryDate + "T" + expiryTime
+      ).getTime();
+
+      if (Number.isNaN(expiresAt)) {
+        setCreateMessage("Invalid expiry date/time.");
+        return;
+      }
+
+      await set(ref(database, "keys/" + key), {
         enabled: true,
         expiresAt: expiresAt,
       });
 
-      alert("License Key Created Successfully!");
+      setCreateMessage("License key created successfully.");
 
-      setNewKey("");
+      setKeyName("");
       setExpiryDate("");
-      setExpiryTime("");
-
-      setActive("Manage Keys");
+      setExpiryTime("23:59");
     } catch (error) {
       console.error(error);
-      alert("Failed to create license key");
+      setCreateMessage("Failed to create license key.");
     }
   };
 
-  /* =========================
-     TOGGLE KEY
-  ========================= */
+  const createRandomKey = () => {
+    setKeyName(generateKey());
+  };
 
   const toggleKey = async (key, currentStatus) => {
     try {
       await set(
-        ref(database, `keys/${key}/enabled`),
+        ref(database, "keys/" + key + "/enabled"),
         !currentStatus
       );
     } catch (error) {
       console.error(error);
-      alert("Failed to change license status");
+      alert("Failed to change key status.");
     }
   };
-
-  /* =========================
-     DELETE KEY
-  ========================= */
 
   const deleteKey = async (key) => {
-    const confirmDelete = window.confirm(
-      `Delete license ${key}?`
+    const confirmed = window.confirm(
+      "Delete license key " + key + "?"
     );
 
-    if (!confirmDelete) return;
+    if (!confirmed) {
+      return;
+    }
 
     try {
-      await set(
-        ref(database, `keys/${key}`),
-        null
-      );
-
-      alert("License deleted successfully!");
+      await remove(ref(database, "keys/" + key));
     } catch (error) {
       console.error(error);
-      alert("Failed to delete license");
+      alert("Failed to delete key.");
     }
   };
 
-  /* =========================
-     SAVE SETTINGS
-  ========================= */
+  const saveSettings = async (event) => {
+    event.preventDefault();
 
-  const saveSettings = async () => {
     try {
       await set(ref(database, "settings"), {
         adminName: adminName,
@@ -226,685 +219,777 @@ function App() {
         maintenance: maintenance,
       });
 
-      setSettingsMessage(
-        "Settings saved successfully ✅"
-      );
-
-      setTimeout(() => {
-        setSettingsMessage("");
-      }, 3000);
-
+      setSettingsMessage("Settings saved successfully.");
     } catch (error) {
       console.error(error);
-
-      setSettingsMessage(
-        "Failed to save settings ❌"
-      );
+      setSettingsMessage("Failed to save settings.");
     }
   };
 
-  /* =========================
-     LOGIN SCREEN
-  ========================= */
+  const getKeyStatus = (data) => {
+    if (!data) {
+      return "expired";
+    }
 
-  if (!loggedIn) {
+    if (!data.enabled) {
+      return "disabled";
+    }
+
+    if (
+      data.expiresAt &&
+      Date.now() >= Number(data.expiresAt)
+    ) {
+      return "expired";
+    }
+
+    return "active";
+  };
+
+  const formatExpiry = (timestamp) => {
+    if (!timestamp) {
+      return "No expiry";
+    }
+
+    const date = new Date(Number(timestamp));
+
+    if (Number.isNaN(date.getTime())) {
+      return "Invalid date";
+    }
+
+    return date.toLocaleString();
+  };
+
+  const keyEntries = Object.entries(keys);
+
+  const totalKeys = keyEntries.length;
+
+  const activeKeys = keyEntries.filter(
+    ([, data]) => getKeyStatus(data) === "active"
+  ).length;
+
+  const expiredKeys = keyEntries.filter(
+    ([, data]) => getKeyStatus(data) === "expired"
+  ).length;
+
+  const disabledKeys = keyEntries.filter(
+    ([, data]) => getKeyStatus(data) === "disabled"
+  ).length;
+
+  if (authLoading) {
     return (
-      <div className="app">
-        <main
-          className="main"
-          style={{
-            width: "100%",
-            marginLeft: 0,
-            minHeight: "100vh",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <section
-            className="panel"
-            style={{
-              width: "100%",
-              maxWidth: "420px",
-              textAlign: "center",
-            }}
-          >
-            <div className="logo">
-              <span>DREAXXA</span>
-              <small>ADMIN PANEL</small>
-            </div>
-
-            <h2 style={{ marginTop: "10px" }}>
-              Admin Login
-            </h2>
-
-            <p>
-              Enter your administrator password
-            </p>
-
-            <div style={{ marginTop: "25px" }}>
-              <input
-                type="password"
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setLoginError("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleLogin();
-                  }
-                }}
-                style={{
-                  width: "100%",
-                  padding: "14px",
-                  background: "#080e17",
-                  border: "1px solid #1d2a3d",
-                  borderRadius: "9px",
-                  outline: "none",
-                  color: "white",
-                  fontSize: "13px",
-                }}
-              />
-            </div>
-
-            <button
-              className="primary"
-              onClick={handleLogin}
-              style={{
-                width: "100%",
-                marginTop: "15px",
-              }}
-            >
-              LOGIN TO DASHBOARD
-            </button>
-
-            {loginError && (
-              <p
-                style={{
-                  color: "#ff5d5d",
-                  marginTop: "15px",
-                  fontSize: "12px",
-                }}
-              >
-                {loginError}
-              </p>
-            )}
-
-            <p
-              style={{
-                marginTop: "25px",
-                color: "#4f5c70",
-                fontSize: "10px",
-              }}
-            >
-              DREAXXA MOD • Secure Admin Access
-            </p>
-          </section>
-        </main>
+      <div className="auth-screen">
+        <div className="login-card">
+          <h1>DREAXXA</h1>
+          <h2>MOD</h2>
+          <p>Checking authentication...</p>
+        </div>
       </div>
     );
   }
 
-  /* =========================
-     MAIN DASHBOARD
-  ========================= */
+  if (!user) {
+    return (
+      <div className="auth-screen">
+        <div className="login-card">
+          <div className="login-logo">DREAXXA</div>
+
+          <div className="login-mod">MOD</div>
+
+          <p className="login-subtitle">
+            ADMIN PANEL
+          </p>
+
+          <form onSubmit={handleLogin}>
+            <input
+              type="email"
+              placeholder="Admin Email"
+              value={email}
+              onChange={(event) =>
+                setEmail(event.target.value)
+              }
+            />
+
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(event) =>
+                setPassword(event.target.value)
+              }
+            />
+
+            {loginError && (
+              <div className="error-message">
+                {loginError}
+              </div>
+            )}
+
+            <button
+              className="primary-button login-button"
+              type="submit"
+              disabled={loggingIn}
+            >
+              {loggingIn ? "LOGIN..." : "LOGIN"}
+            </button>
+          </form>
+
+          <div className="login-footer">
+            DREAXXA MOD • Secure Admin
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="app">
-
-      {/* SIDEBAR */}
+    <div className="app-layout">
 
       <aside className="sidebar">
 
-        <div className="logo">
-          <span>DREAXXA</span>
-          <small>ADMIN PANEL</small>
+        <div className="brand">
+          <div className="brand-main">
+            DREAXXA
+          </div>
+
+          <div className="brand-mod">
+            MOD
+          </div>
         </div>
 
-        <div className="menu">
+        <div className="brand-line"></div>
 
-          {menu.map((item) => (
-            <button
-              key={item}
-              className={
-                active === item
-                  ? "menu-item active"
-                  : "menu-item"
-              }
-              onClick={() => setActive(item)}
-            >
-              {item}
-            </button>
-          ))}
+        <nav className="sidebar-nav">
 
           <button
-            className="menu-item"
-            onClick={() => {
-              setLoggedIn(false);
-              setActive("Dashboard");
-            }}
-            style={{
-              marginTop: "10px",
-              color: "#ff6767",
-            }}
+            className={
+              activePage === "dashboard"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() => setActivePage("dashboard")}
+          >
+            <span>▣</span>
+            Dashboard
+          </button>
+
+          <button
+            className={
+              activePage === "create"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() => setActivePage("create")}
+          >
+            <span>＋</span>
+            Create Key
+          </button>
+
+          <button
+            className={
+              activePage === "manage"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() => setActivePage("manage")}
+          >
+            <span>☷</span>
+            Manage Keys
+          </button>
+
+          <button
+            className={
+              activePage === "settings"
+                ? "nav-item active"
+                : "nav-item"
+            }
+            onClick={() => setActivePage("settings")}
+          >
+            <span>⚙</span>
+            Settings
+          </button>
+
+        </nav>
+
+        <div className="sidebar-bottom">
+
+          <div className="server-status">
+            <span className="status-dot"></span>
+            Server Online
+          </div>
+
+          <button
+            className="logout-button"
+            onClick={handleLogout}
           >
             Logout
           </button>
 
         </div>
 
-        <div className="sidebar-bottom">
-
-          <div className="server">
-            <span className="dot"></span>
-            Server Online
-          </div>
-
-          <div className="version">
-            DREAXXA MOD v{appVersion}
-          </div>
-
-        </div>
-
       </aside>
 
-      {/* MAIN */}
-
-      <main className="main">
-
-        {/* TOPBAR */}
+      <main className="main-content">
 
         <header className="topbar">
 
           <div>
+            <h1>
+              {activePage === "dashboard" &&
+                "Dashboard"}
 
-            <h1>{active}</h1>
+              {activePage === "create" &&
+                "Create License Key"}
+
+              {activePage === "manage" &&
+                "Manage Keys"}
+
+              {activePage === "settings" &&
+                "Settings"}
+            </h1>
 
             <p>
-              Welcome to DREAXXA MOD control panel
+              DREAXXA MOD Control Center
             </p>
-
           </div>
 
-          <div className="admin">
-
-            <div className="avatar">
-              D
+          <div className="admin-user">
+            <div className="admin-avatar">
+              {adminName
+                .charAt(0)
+                .toUpperCase()}
             </div>
 
             <div>
-
-              <strong>
-                {adminName}
-              </strong>
-
-              <small>
-                Administrator
-              </small>
-
+              <strong>{adminName}</strong>
+              <span>{user.email}</span>
             </div>
-
           </div>
 
         </header>
 
-        {/* =========================
-            DASHBOARD
-        ========================= */}
+        {activePage === "dashboard" && (
+          <section>
 
-        {active === "Dashboard" && (
-          <>
+            <div className="stats-grid">
 
-            <section className="stats">
-
-              <div className="card">
-                <span>Total Keys</span>
-                <strong>{keyList.length}</strong>
-                <small>All licenses</small>
-              </div>
-
-              <div className="card green">
-                <span>Active Keys</span>
-                <strong>{activeKeys.length}</strong>
-                <small>Currently enabled</small>
-              </div>
-
-              <div className="card orange">
-                <span>Expired</span>
-                <strong>{expiredKeys.length}</strong>
-                <small>Expired licenses</small>
-              </div>
-
-              <div className="card red">
-                <span>Disabled</span>
-                <strong>{disabledKeys.length}</strong>
-                <small>Turned off</small>
-              </div>
-
-            </section>
-
-            {/* QUICK ACTIONS */}
-
-            <section className="panel">
-
-              <div className="panel-title">
-
-                <div>
-
-                  <h2>Quick Actions</h2>
-
-                  <p>
-                    Manage your licenses quickly
-                  </p>
-
+              <div className="stat-card">
+                <div className="stat-title">
+                  TOTAL KEYS
                 </div>
 
-              </div>
-
-              <div className="actions">
-
-                <button
-                  onClick={() =>
-                    setActive("Create Key")
-                  }
-                >
-                  <b>+</b>
-                  Create New Key
-                </button>
-
-                <button
-                  onClick={() =>
-                    setActive("Manage Keys")
-                  }
-                >
-                  <b>⌕</b>
-                  Manage Keys
-                </button>
-
-              </div>
-
-            </section>
-
-            {/* RECENT LICENSE */}
-
-            <section className="panel">
-
-              <div className="panel-title">
-
-                <div>
-
-                  <h2>Recent License</h2>
-
-                  <p>
-                    Latest license activity
-                  </p>
-
+                <div className="stat-number">
+                  {totalKeys}
                 </div>
 
+                <div className="stat-description">
+                  All license keys
+                </div>
               </div>
 
-              {keyList.length === 0 ? (
-
-                <div className="key-row">
-                  <span>
-                    No licenses found
-                  </span>
+              <div className="stat-card active-card">
+                <div className="stat-title">
+                  ACTIVE KEYS
                 </div>
 
-              ) : (
+                <div className="stat-number">
+                  {activeKeys}
+                </div>
 
-                keyList.map(([key, data]) => (
+                <div className="stat-description">
+                  Currently active
+                </div>
+              </div>
 
-                  <div
-                    className="key-row"
-                    key={key}
-                  >
+              <div className="stat-card expired-card">
+                <div className="stat-title">
+                  EXPIRED
+                </div>
 
-                    <div>
+                <div className="stat-number">
+                  {expiredKeys}
+                </div>
 
-                      <strong>
-                        {key}
-                      </strong>
+                <div className="stat-description">
+                  Expired licenses
+                </div>
+              </div>
 
-                      <span>
-                        {data?.enabled
-                          ? "Enabled"
-                          : "Disabled"}
-                      </span>
+              <div className="stat-card disabled-card">
+                <div className="stat-title">
+                  DISABLED
+                </div>
 
-                    </div>
+                <div className="stat-number">
+                  {disabledKeys}
+                </div>
 
-                    <span
-                      className={
-                        data?.enabled
-                          ? "badge active-badge"
-                          : "badge"
-                      }
-                    >
-                      {data?.enabled
-                        ? "ACTIVE"
-                        : "OFF"}
-                    </span>
-
-                  </div>
-
-                ))
-
-              )}
-
-            </section>
-
-          </>
-        )}
-
-        {/* =========================
-            CREATE KEY
-        ========================= */}
-
-        {active === "Create Key" && (
-
-          <section className="panel page-panel">
-
-            <h2>
-              Create License Key
-            </h2>
-
-            <p>
-              Create a new DREAXXA MOD license.
-            </p>
-
-            <div className="form-grid">
-
-              <input
-                type="text"
-                placeholder="License Key"
-                value={newKey}
-                onChange={(e) =>
-                  setNewKey(e.target.value)
-                }
-              />
-
-              <input
-                type="date"
-                value={expiryDate}
-                onChange={(e) =>
-                  setExpiryDate(e.target.value)
-                }
-              />
-
-              <input
-                type="time"
-                value={expiryTime}
-                onChange={(e) =>
-                  setExpiryTime(e.target.value)
-                }
-              />
+                <div className="stat-description">
+                  Disabled licenses
+                </div>
+              </div>
 
             </div>
 
-            <button
-              className="primary"
-              onClick={createKey}
-            >
-              CREATE KEY
-            </button>
+            <div className="dashboard-grid">
 
-          </section>
+              <div className="panel-card">
 
-        )}
-
-        {/* =========================
-            MANAGE KEYS
-        ========================= */}
-
-        {active === "Manage Keys" && (
-
-          <section className="panel page-panel">
-
-            <h2>
-              Manage License Keys
-            </h2>
-
-            <p>
-              Control your licenses directly from Firebase.
-            </p>
-
-            {keyList.length === 0 ? (
-
-              <div className="key-row">
-                <span>
-                  No keys found
-                </span>
-              </div>
-
-            ) : (
-
-              keyList.map(([key, data]) => (
-
-                <div
-                  className="key-row"
-                  key={key}
-                >
-
+                <div className="panel-header">
                   <div>
+                    <h2>Quick Actions</h2>
+                    <p>
+                      Manage your license system
+                    </p>
+                  </div>
+                </div>
 
+                <div className="quick-actions">
+
+                  <button
+                    className="quick-button"
+                    onClick={() =>
+                      setActivePage("create")
+                    }
+                  >
                     <strong>
-                      {key}
+                      ＋ Create Key
                     </strong>
 
                     <span>
-                      Status:{" "}
-                      {data?.enabled
-                        ? "ON"
-                        : "OFF"}
+                      Create a new license
                     </span>
+                  </button>
+
+                  <button
+                    className="quick-button"
+                    onClick={() =>
+                      setActivePage("manage")
+                    }
+                  >
+                    <strong>
+                      ☷ Manage Keys
+                    </strong>
 
                     <span>
-                      Expires:{" "}
-                      {data?.expiresAt
-                        ? new Date(
-                            Number(data.expiresAt)
-                          ).toLocaleString()
-                        : "No expiry"}
+                      View and control keys
                     </span>
+                  </button>
 
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                    }}
+                  <button
+                    className="quick-button"
+                    onClick={() =>
+                      setActivePage("settings")
+                    }
                   >
+                    <strong>
+                      ⚙ Settings
+                    </strong>
 
-                    <button
-                      className="toggle"
-                      onClick={() =>
-                        toggleKey(
-                          key,
-                          data?.enabled
-                        )
-                      }
-                    >
-                      {data?.enabled
-                        ? "ON"
-                        : "OFF"}
-                    </button>
-
-                    <button
-                      className="toggle"
-                      onClick={() =>
-                        deleteKey(key)
-                      }
-                    >
-                      DELETE
-                    </button>
-
-                  </div>
+                    <span>
+                      Configure application
+                    </span>
+                  </button>
 
                 </div>
 
-              ))
+              </div>
 
-            )}
+              <div className="panel-card">
+
+                <div className="panel-header">
+                  <div>
+                    <h2>System Status</h2>
+                    <p>
+                      Current server information
+                    </p>
+                  </div>
+                </div>
+
+                <div className="system-row">
+                  <span>Firebase Database</span>
+                  <strong className="online-text">
+                    ONLINE
+                  </strong>
+                </div>
+
+                <div className="system-row">
+                  <span>Authentication</span>
+                  <strong className="online-text">
+                    SECURE
+                  </strong>
+                </div>
+
+                <div className="system-row">
+                  <span>App Version</span>
+                  <strong>
+                    {settings.appVersion || "1.0.0"}
+                  </strong>
+                </div>
+
+                <div className="system-row">
+                  <span>Maintenance</span>
+                  <strong>
+                    {settings.maintenance
+                      ? "ON"
+                      : "OFF"}
+                  </strong>
+                </div>
+
+              </div>
+
+            </div>
 
           </section>
-
         )}
 
-        {/* =========================
-            SETTINGS
-        ========================= */}
+        {activePage === "create" && (
+          <section className="page-section">
 
-        {active === "Settings" && (
+            <div className="form-card">
 
-          <section className="panel page-panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Create License Key</h2>
+                  <p>
+                    Generate a new DREAXXA license
+                  </p>
+                </div>
+              </div>
 
-            <h2>
-              Admin Settings
-            </h2>
+              <form
+                className="license-form"
+                onSubmit={createLicenseKey}
+              >
 
-            <p>
-              Configure your DREAXXA MOD control panel.
-            </p>
+                <label>
+                  License Key
+                </label>
 
-            {/* ADMIN PROFILE */}
+                <div className="key-input-row">
 
-            <div
-              style={{
-                marginTop: "25px",
-                marginBottom: "25px",
-              }}
-            >
+                  <input
+                    type="text"
+                    placeholder="DRX-XXXX-XXXX"
+                    value={keyName}
+                    onChange={(event) =>
+                      setKeyName(event.target.value)
+                    }
+                  />
 
-              <h3>
-                Admin Profile
-              </h3>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={createRandomKey}
+                  >
+                    Generate
+                  </button>
 
-              <p>
-                Change the administrator name.
-              </p>
+                </div>
 
-              <input
-                type="text"
-                placeholder="Admin Name"
-                value={adminName}
-                onChange={(e) =>
-                  setAdminName(e.target.value)
-                }
-              />
+                <label>
+                  Expiry Date
+                </label>
 
-            </div>
+                <input
+                  type="date"
+                  value={expiryDate}
+                  onChange={(event) =>
+                    setExpiryDate(event.target.value)
+                  }
+                />
 
-            {/* APP VERSION */}
+                <label>
+                  Expiry Time
+                </label>
 
-            <div
-              style={{
-                marginBottom: "25px",
-              }}
-            >
+                <input
+                  type="time"
+                  value={expiryTime}
+                  onChange={(event) =>
+                    setExpiryTime(event.target.value)
+                  }
+                />
 
-              <h3>
-                App Version
-              </h3>
+                {createMessage && (
+                  <div className="success-message">
+                    {createMessage}
+                  </div>
+                )}
 
-              <p>
-                Current DREAXXA MOD version.
-              </p>
-
-              <input
-                type="text"
-                placeholder="1.0.0"
-                value={appVersion}
-                onChange={(e) =>
-                  setAppVersion(e.target.value)
-                }
-              />
-
-            </div>
-
-            {/* SERVER STATUS */}
-
-            <div
-              style={{
-                marginBottom: "25px",
-              }}
-            >
-
-              <h3>
-                Server Status
-              </h3>
-
-              <p>
-
-                <span
-                  style={{
-                    color: "#55D98A",
-                    fontWeight: "bold",
-                  }}
+                <button
+                  type="submit"
+                  className="primary-button"
                 >
-                  ● ONLINE
-                </span>
+                  CREATE LICENSE
+                </button>
 
-              </p>
-
-            </div>
-
-            {/* MAINTENANCE */}
-
-            <div
-              style={{
-                marginBottom: "25px",
-              }}
-            >
-
-              <h3>
-                Maintenance Mode
-              </h3>
-
-              <p>
-                Temporarily disable the app for maintenance.
-              </p>
-
-              <button
-                className="toggle"
-                onClick={() =>
-                  setMaintenance(!maintenance)
-                }
-              >
-                {maintenance
-                  ? "ENABLED"
-                  : "DISABLED"}
-              </button>
+              </form>
 
             </div>
-
-            {/* SAVE */}
-
-            <button
-              className="primary"
-              onClick={saveSettings}
-            >
-              SAVE SETTINGS
-            </button>
-
-            {settingsMessage && (
-
-              <p
-                style={{
-                  marginTop: "15px",
-                  color: "#55D98A",
-                }}
-              >
-                {settingsMessage}
-              </p>
-
-            )}
 
           </section>
+        )}
 
+        {activePage === "manage" && (
+          <section className="page-section">
+
+            <div className="panel-card">
+
+              <div className="panel-header">
+
+                <div>
+                  <h2>License Keys</h2>
+
+                  <p>
+                    Control all DREAXXA licenses
+                  </p>
+                </div>
+
+                <button
+                  className="primary-button small-button"
+                  onClick={() =>
+                    setActivePage("create")
+                  }
+                >
+                  + CREATE KEY
+                </button>
+
+              </div>
+
+              {keyEntries.length === 0 ? (
+                <div className="empty-state">
+                  No license keys found.
+                </div>
+              ) : (
+                <div className="keys-table">
+
+                  <div className="table-head">
+                    <span>LICENSE KEY</span>
+                    <span>STATUS</span>
+                    <span>EXPIRY</span>
+                    <span>ACTION</span>
+                  </div>
+
+                  {keyEntries.map(
+                    ([key, data]) => {
+
+                      const status =
+                        getKeyStatus(data);
+
+                      return (
+                        <div
+                          className="table-row"
+                          key={key}
+                        >
+
+                          <div className="key-text">
+                            {key}
+                          </div>
+
+                          <div>
+                            <span
+                              className={
+                                "status-badge " +
+                                status
+                              }
+                            >
+                              {status.toUpperCase()}
+                            </span>
+                          </div>
+
+                          <div className="expiry-text">
+                            {formatExpiry(
+                              data.expiresAt
+                            )}
+                          </div>
+
+                          <div className="action-buttons">
+
+                            <button
+                              className={
+                                data.enabled
+                                  ? "toggle-button on"
+                                  : "toggle-button off"
+                              }
+                              onClick={() =>
+                                toggleKey(
+                                  key,
+                                  Boolean(
+                                    data.enabled
+                                  )
+                                )
+                              }
+                            >
+                              {data.enabled
+                                ? "ON"
+                                : "OFF"}
+                            </button>
+
+                            <button
+                              className="delete-button"
+                              onClick={() =>
+                                deleteKey(key)
+                              }
+                            >
+                              DELETE
+                            </button>
+
+                          </div>
+
+                        </div>
+                      );
+                    }
+                  )}
+
+                </div>
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+        {activePage === "settings" && (
+          <section className="page-section">
+
+            <div className="settings-grid">
+
+              <div className="form-card">
+
+                <div className="panel-header">
+                  <div>
+                    <h2>Admin Profile</h2>
+                    <p>
+                      Update dashboard information
+                    </p>
+                  </div>
+                </div>
+
+                <form
+                  className="license-form"
+                  onSubmit={saveSettings}
+                >
+
+                  <label>
+                    Admin Name
+                  </label>
+
+                  <input
+                    type="text"
+                    value={adminName}
+                    onChange={(event) =>
+                      setAdminName(
+                        event.target.value
+                      )
+                    }
+                  />
+
+                  <label>
+                    App Version
+                  </label>
+
+                  <input
+                    type="text"
+                    value={appVersion}
+                    onChange={(event) =>
+                      setAppVersion(
+                        event.target.value
+                      )
+                    }
+                  />
+
+                  <div className="maintenance-box">
+
+                    <div>
+                      <strong>
+                        Maintenance Mode
+                      </strong>
+
+                      <span>
+                        Control application
+                        maintenance status
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      className={
+                        maintenance
+                          ? "toggle-button on"
+                          : "toggle-button off"
+                      }
+                      onClick={() =>
+                        setMaintenance(
+                          !maintenance
+                        )
+                      }
+                    >
+                      {maintenance
+                        ? "ON"
+                        : "OFF"}
+                    </button>
+
+                  </div>
+
+                  {settingsMessage && (
+                    <div className="success-message">
+                      {settingsMessage}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="primary-button"
+                  >
+                    SAVE SETTINGS
+                  </button>
+
+                </form>
+
+              </div>
+
+              <div className="panel-card">
+
+                <div className="panel-header">
+                  <div>
+                    <h2>Server Status</h2>
+                    <p>
+                      Firebase connection
+                    </p>
+                  </div>
+                </div>
+
+                <div className="server-big-status">
+                  <span className="status-dot"></span>
+                  <strong>ONLINE</strong>
+                </div>
+
+                <div className="system-row">
+                  <span>Database</span>
+                  <strong>
+                    Realtime Database
+                  </strong>
+                </div>
+
+                <div className="system-row">
+                  <span>Authentication</span>
+                  <strong>
+                    Firebase Auth
+                  </strong>
+                </div>
+
+                <div className="system-row">
+                  <span>Logged in as</span>
+                  <strong>
+                    {user.email}
+                  </strong>
+                </div>
+
+              </div>
+
+            </div>
+
+          </section>
         )}
 
       </main>
